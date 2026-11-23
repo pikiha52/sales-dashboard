@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Penjualan</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #5f6b7a; --line: #e3e6ea;
+    --bar: #2f6fd6; --bar-bg: #e8eef9; --warn: #b42318; --warn-bg: #fdecea; --heat: 47, 111, 214;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1a1e24; --text: #e7eaee; --muted: #9aa5b1; --line: #2b313a;
+      --bar: #5b93ee; --bar-bg: #22324a; --warn: #ff8a80; --warn-bg: #3a1f1f; --heat: 91, 147, 238; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; overflow-x: auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .kpi b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .grid2 .card { margin-bottom: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { background: var(--bar-bg); border-radius: 3px; height: 8px; min-width: 80px; }
+  .bar i { display: block; height: 100%; background: var(--bar); border-radius: 3px; }
+  .weak td { background: var(--warn-bg); }
+  .down { color: var(--warn); }
+  #summary { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 0 0 10px; }
+  button, label.btn { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); padding: 7px 14px; border-radius: 8px; cursor: pointer; }
+  button.primary { background: var(--bar); color: #fff; border-color: var(--bar); }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  label.btn:focus-within { outline: 2px solid var(--bar); }
+  .empty { text-align: center; padding: 48px 16px; }
+  ul { margin: 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Dashboard Penjualan</h1>
+      <div class="muted" id="meta">Pilih file CSV penjualan untuk mulai.</div>
+    </div>
+    <label class="btn">Pilih file CSV… <input type="file" id="file" accept=".csv,text/csv"></label>
+  </header>
+  <div id="app"><div class="card empty muted">Belum ada data. Klik <b>Pilih file CSV…</b> lalu pilih <code>sales.csv</code>.</div></div>
+</main>
+
+<script src="report.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const bar = (v, max) => `<div class="bar"><i style="width:${max > 0 ? Math.max(0, v / max * 100) : 0}%"></i></div>`;
+const change = (a, b) => a ? `<span class="${b < a ? 'down' : ''}">${signedPct((b - a) / a)}</span>` : '–';
+
+function render(text, fileName) {
+  let r;
+  try { r = buildReport(parseCSV(text)); }
+  catch (e) { $('app').innerHTML = `<div class="card empty down">${esc(e.message)}</div>`; return; }
+  if (!r.rowCount) { $('app').innerHTML = '<div class="card empty">Tidak ada baris valid di file ini.</div>'; return; }
+
+  const m = r.months, last = m.at(-1), prev = m.at(-2);
+  $('meta').textContent = `${fileName} · ${fmtDate(r.period.start)} – ${fmtDate(r.period.end)} · ${r.rowCount.toLocaleString('id-ID')} baris`;
+  const monthTh = m.map(x => `<th class="n">${esc(monthName(x.key))}</th>`).join('');
+  const brands = r.byBrand.map(b => b.name);
+  const cellMax = Math.max(...Object.values(r.matrix));
+  const q = r.quality;
+
+  $('app').innerHTML = `
+  <div class="kpis">
+    <div class="kpi"><span class="muted">Net sales</span><b>${jt(r.total)}</b></div>
+    <div class="kpi"><span class="muted">Invoice</span><b>${r.invoices.toLocaleString('id-ID')}</b></div>
+    <div class="kpi"><span class="muted">Outlet aktif</span><b>${r.outletCount}</b></div>
+    ${prev ? `<div class="kpi"><span class="muted">${esc(monthName(last.key))} vs ${esc(monthName(prev.key))}</span><b>${change(prev.net, last.net)}</b></div>` : ''}
+  </div>
+
+  <div class="card">
+    <h2>Ringkasan untuk Telegram</h2>
+    <p id="summary"></p>
+    <button class="primary" id="copy">Salin ringkasan</button> <span class="muted" id="copied" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2>5 outlet terlemah <span class="muted">(net sales terendah dalam periode)</span></h2>
+    <table>
+      <tr><th>Outlet</th><th>Tipe</th><th>Branch / Region</th>${monthTh}<th class="n">Total</th><th class="n">Perubahan</th><th class="n">Invoice</th><th>Order terakhir</th></tr>
+      ${r.weakest.map(o => `<tr class="weak"><td><b>${esc(o.name)}</b> <span class="muted">${esc(o.id)}</span></td><td>${esc(o.type)}</td><td>${esc(o.branch)} / ${esc(o.region)}</td>
+        ${o.months.map(v => `<td class="n">${jt(v)}</td>`).join('')}<td class="n"><b>${jt(o.net)}</b></td>
+        <td class="n">${o.months.length > 1 ? change(o.months.at(-2), o.months.at(-1)) : '–'}</td><td class="n">${o.invoices}</td><td>${fmtDate(o.lastDate)}</td></tr>`).join('')}
+    </table>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Penjualan per region</h2>
+      <table>
+        <tr><th>Region</th><th></th>${monthTh}<th class="n">Total</th><th class="n">Porsi</th></tr>
+        ${r.byRegion.map(x => `<tr><td>${esc(x.name)}</td><td>${bar(x.net, r.byRegion[0].net)}</td>${x.months.map(v => `<td class="n">${jt(v)}</td>`).join('')}<td class="n"><b>${jt(x.net)}</b></td><td class="n">${pct(x.share)}</td></tr>`).join('')}
+      </table>
+    </div>
+    <div class="card">
+      <h2>Penjualan per brand</h2>
+      <table>
+        <tr><th>Brand</th><th></th><th class="n">Total</th><th class="n">Porsi</th></tr>
+        ${r.byBrand.map(x => `<tr><td>${esc(x.name)}</td><td>${bar(x.net, r.byBrand[0].net)}</td><td class="n"><b>${jt(x.net)}</b></td><td class="n">${pct(x.share)}</td></tr>`).join('')}
+      </table>
+    </div>
+  </div>
+  <div style="height:16px"></div>
+
+  <div class="card">
+    <h2>Region × brand <span class="muted">(net sales, juta Rp)</span></h2>
+    <table>
+      <tr><th>Region</th>${brands.map(b => `<th class="n">${esc(b)}</th>`).join('')}</tr>
+      ${r.byRegion.map(x => `<tr><td>${esc(x.name)}</td>${brands.map(b => {
+        const v = r.matrix[x.name + '|' + b] || 0;
+        return `<td class="n" style="background:rgba(var(--heat),${(Math.max(0, v) / cellMax * 0.45).toFixed(2)})">${(v / 1e6).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td>`;
+      }).join('')}</tr>`).join('')}
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Catatan kualitas data</h2>
+    <ul class="muted">
+      <li>${q.duplicates} baris duplikat persis dibuang</li>
+      <li>${q.regionFixed} baris dengan penulisan region berbeda diseragamkan (mis. "Jabar", "JAWA BARAT" → "Jawa Barat")</li>
+      <li>${q.returns} baris retur (nilai negatif) ikut dihitung mengurangi net sales</li>
+      <li>${q.missingSalesman} baris tanpa nama salesman tetap dihitung</li>
+      <li>${q.invalid} baris tidak valid (tanggal/angka rusak) diabaikan</li>
+    </ul>
+  </div>`;
+
+  $('summary').textContent = summaryText(r);
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('summary').textContent); $('copied').textContent = 'Tersalin.'; }
+    catch { getSelection().selectAllChildren($('summary')); $('copied').textContent = 'Tekan Ctrl+C untuk menyalin.'; }
+  };
+}
+
+$('file').onchange = e => { const f = e.target.files[0]; if (f) f.text().then(t => render(t, f.name)); };
+// Served over http (e.g. python -m http.server)? Load sales.csv next to this page automatically.
+if (location.protocol.startsWith('http')) fetch('sales.csv').then(r => r.ok ? r.text() : Promise.reject()).then(t => render(t, 'sales.csv')).catch(() => {});
+</script>
+</body>
+</html>
